@@ -74,7 +74,11 @@ const bf_machine = struct {
                 '+' => {self.mem[self.pos] += 1; program_pos += 1;},
                 '-' => {self.mem[self.pos] -= 1; program_pos += 1;},
                 '.' => {try stdout.print("{c}", .{self.mem[self.pos]}); program_pos += 1;},
-                ',' => {},
+                ',' => {
+                    var i:u8 = try stdin.readByte();
+                    self.mem[self.pos] = i;
+                    program_pos += 1;
+                },
                 '[' => {
                     program_pos += 1;
                     program_pos = try self.execute(.{.program_pos = program_pos, .loop = true, .loop_start = program_pos});
@@ -101,13 +105,30 @@ const bf_machine = struct {
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
-    var program:std.ArrayList(u8) = std.ArrayList(u8).init(allocator);
-    defer program.deinit();
-    var input:[1]u8 = undefined;
-    
-    while(try stdin.readAll(&input) > 0) try program.append(input[0]);
+    // Basic read from input code
+    // var program:std.ArrayList(u8) = std.ArrayList(u8).init(allocator);
+    // defer program.deinit();
+    // var input:[1]u8 = undefined;
+    // while(try stdin.readAll(&input) > 0) try program.append(input[0]);
+    // var bf = try bf_machine.init(allocator, program.items);
+    // defer bf.deinit();
+    // _ = try bf.execute(.{});
+    const args = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, args);
 
-    var bf = try bf_machine.init(allocator, program.items);
-    defer bf.deinit();
-    _ = try bf.execute(.{});
+    if(args.len != 2) {
+        try stdout.print("Filename as first argument required!\n", .{});
+    } else {
+        var f = try std.fs.openFileAbsolute(args[1], .{});
+        defer f.close();
+        var s = try f.stat();
+        var d = try allocator.alloc(u8, s.size);
+        defer allocator.free(d);
+
+        _ = try f.readAll(d);
+
+        var bf = try bf_machine.init(allocator, d);
+        defer bf.deinit();
+        _ = try bf.execute(.{});
+    }
 }
