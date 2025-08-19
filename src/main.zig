@@ -39,7 +39,7 @@ const bf_machine = struct {
     allocator:std.mem.Allocator,
 
     pub fn init(allocator:std.mem.Allocator, program:[]const u8) !Self {
-        var mem = try allocator.alloc(u8, size);
+        const mem = try allocator.alloc(u8, size);
         for(mem) |*x| { // allocator doesn't make sure any of this is actually zero
             x.* = 0;
         }
@@ -51,19 +51,19 @@ const bf_machine = struct {
         };
     }
 
-    pub fn bracket_check(program:[]const u8) bool {
-        var pos = 0;
-        var open = 0;
-        var closed = 0;
-        while(pos < program.len-1) {
-            switch(program[pos]) {
-                '[' => {open += 1;},
-                ']' => {closed += 1;},
-                else => {},
-            }
-        }
-        if(open == closed) return false else return true;
-    }
+    // pub fn bracket_check(program:[]const u8) bool {
+    //     var pos = 0;
+    //     var open = 0;
+    //     var closed = 0;
+    //     while(pos < program.len-1) {
+    //         switch(program[pos]) {
+    //             '[' => {open += 1;},
+    //             ']' => {closed += 1;},
+    //             else => {},
+    //         }
+    //     }
+    //     if(open == closed) return false else return true;
+    // }
 
     pub fn execute(self:*Self, param:exeParam) !usize { 
         var program_pos = param.program_pos;
@@ -71,11 +71,11 @@ const bf_machine = struct {
             switch(self.program[program_pos]) {
                 '>' => {self.pos += 1; program_pos += 1;},
                 '<' => {self.pos -= 1; program_pos += 1;},
-                '+' => {self.mem[self.pos] += 1; program_pos += 1;},
-                '-' => {self.mem[self.pos] -= 1; program_pos += 1;},
+                '+' => {self.mem[self.pos] = @addWithOverflow(self.mem[self.pos], 1)[0]; program_pos += 1;},
+                '-' => {self.mem[self.pos] = @subWithOverflow(self.mem[self.pos], 1)[0]; program_pos += 1;},
                 '.' => {try stdout.print("{c}", .{self.mem[self.pos]}); program_pos += 1;},
                 ',' => {
-                    var i:u8 = try stdin.readByte();
+                    const i:u8 = try stdin.readByte();
                     self.mem[self.pos] = i;
                     program_pos += 1;
                 },
@@ -105,27 +105,22 @@ const bf_machine = struct {
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     const allocator = gpa.allocator();
-    // Basic read from input code
-    // var program:std.ArrayList(u8) = std.ArrayList(u8).init(allocator);
-    // defer program.deinit();
-    // var input:[1]u8 = undefined;
-    // while(try stdin.readAll(&input) > 0) try program.append(input[0]);
-    // var bf = try bf_machine.init(allocator, program.items);
-    // defer bf.deinit();
-    // _ = try bf.execute(.{});
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
     if(args.len != 2) {
         try stdout.print("Filename as first argument required!\n", .{});
     } else {
-        var f = try std.fs.openFileAbsolute(args[1], .{});
+        var f = try std.fs.cwd().openFile(args[1], .{});
         defer f.close();
-        var s = try f.stat();
-        var d = try allocator.alloc(u8, s.size);
+        const s = try f.stat();
+        const d = try allocator.alloc(u8, s.size);
         defer allocator.free(d);
 
-        _ = try f.readAll(d);
+        if(try f.readAll(d)<=0) {
+            std.debug.print("File is Empty!\n", .{});
+            return;
+        }
 
         var bf = try bf_machine.init(allocator, d);
         defer bf.deinit();
