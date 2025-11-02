@@ -19,12 +19,13 @@
 // THE SOFTWARE.
 
 const std = @import("std");
-const stdin = std.io.getStdIn().reader();
-const stdout = std.io.getStdOut().writer();
+
+var stdout_buffer: [256]u8 = undefined;
+var stdin_buffer: [256]u8 = undefined;
 
 const bf_machine = struct {
     const Self = @This();
-    const size:usize = 5000;
+    const size:usize = 30000;
     const exeParam = struct {
         program_pos:usize = 0,
         loop:bool = false,
@@ -32,38 +33,27 @@ const bf_machine = struct {
     };
     const Fail = error {
         Odd_Brackets,
+        Odd_Brackets_Overflow
     };
     mem:[]u8,
     pos:usize,
     program:[]const u8,
     allocator:std.mem.Allocator,
+    stdout:*std.io.Writer,
+    stdin:*std.io.Reader,
 
-    pub fn init(allocator:std.mem.Allocator, program:[]const u8) !Self {
+    pub fn init(allocator:std.mem.Allocator, program:[]const u8, stdin:*std.io.Reader, stdout:*std.io.Writer) !Self {
         const mem = try allocator.alloc(u8, size);
-        for(mem) |*x| { // allocator doesn't make sure any of this is actually zero
-            x.* = 0;
-        }
+        @memset(mem, 0);
         return .{
             .program = program,
             .mem = mem,
             .allocator = allocator,
             .pos = 0,
+            .stdin = stdin,
+            .stdout = stdout,
         };
     }
-
-    // pub fn bracket_check(program:[]const u8) bool {
-    //     var pos = 0;
-    //     var open = 0;
-    //     var closed = 0;
-    //     while(pos < program.len-1) {
-    //         switch(program[pos]) {
-    //             '[' => {open += 1;},
-    //             ']' => {closed += 1;},
-    //             else => {},
-    //         }
-    //     }
-    //     if(open == closed) return false else return true;
-    // }
 
     pub fn execute(self:*Self, param:exeParam) !usize { 
         var program_pos = param.program_pos;
@@ -71,17 +61,26 @@ const bf_machine = struct {
             switch(self.program[program_pos]) {
                 '>' => {self.pos += 1; program_pos += 1;},
                 '<' => {self.pos -= 1; program_pos += 1;},
-                '+' => {self.mem[self.pos] = @addWithOverflow(self.mem[self.pos], 1)[0]; program_pos += 1;},
-                '-' => {self.mem[self.pos] = @subWithOverflow(self.mem[self.pos], 1)[0]; program_pos += 1;},
-                '.' => {try stdout.print("{c}", .{self.mem[self.pos]}); program_pos += 1;},
+                '+' => {self.mem[self.pos] +%= 1; program_pos += 1;},
+                '-' => {self.mem[self.pos] -%= 1; program_pos += 1;},
+                '.' => {try self.stdout.print("{c}", .{self.mem[self.pos]}); try self.stdout.flush(); program_pos += 1;},
                 ',' => {
-                    const i:u8 = try stdin.readByte();
+                    const i:u8 = try self.stdin.takeByte();
                     self.mem[self.pos] = i;
                     program_pos += 1;
                 },
                 '[' => {
-                    program_pos += 1;
-                    program_pos = try self.execute(.{.program_pos = program_pos, .loop = true, .loop_start = program_pos});
+                    if(self.mem[self.pos] == 0) {
+                        var nested:usize = 1;
+                        program_pos += 1;
+                        while(nested > 0 and program_pos < self.program.len-1) : (program_pos += 1) {
+                            if(self.program[program_pos] == ']') nested -= 1 else if (self.program[program_pos] == '[') nested += 1;
+                        }
+                        if(nested != 0) return Fail.Odd_Brackets_Overflow;
+                    } else {
+                        program_pos += 1;
+                        program_pos = try self.execute(.{.program_pos = program_pos, .loop = true, .loop_start = program_pos});
+                    }
                 },
                 ']' => {
                     if(param.loop == true) {
@@ -99,7 +98,6 @@ const bf_machine = struct {
     pub fn deinit(self:*Self) void {
         self.allocator.free(self.mem);
     }
-
 };
 
 pub fn main() !void {
@@ -108,8 +106,14 @@ pub fn main() !void {
     const args = try std.process.argsAlloc(allocator);
     defer std.process.argsFree(allocator, args);
 
+    var stdout_writer_wrapper = std.fs.File.stdout().writer(&stdout_buffer);
+    const stdout: *std.io.Writer = &stdout_writer_wrapper.interface;
+
+    var stdin_reader_wrapper = std.fs.File.stdin().reader(&stdin_buffer);
+    const stdin: *std.io.Reader = &stdin_reader_wrapper.interface;
+
     if(args.len != 2) {
-        try stdout.print("Filename as first argument required!\n", .{});
+        std.debug.print("Filename as first argument required!\n", .{});
     } else {
         var f = try std.fs.cwd().openFile(args[1], .{});
         defer f.close();
@@ -122,8 +126,10 @@ pub fn main() !void {
             return;
         }
 
-        var bf = try bf_machine.init(allocator, d);
+        var bf = try bf_machine.init(allocator, d, stdin, stdout);
         defer bf.deinit();
         _ = try bf.execute(.{});
     }
+
+    try stdout.flush();
 }
